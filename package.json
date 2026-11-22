@@ -1,0 +1,32 @@
+{
+  "name": "rentcheck-backend",
+  "version": "1.0.0",
+  "description": "Backend API for the RENTCHECK property and tenancy management platform",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suruaino/rentcheck-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/suruaino/rentcheck-backend/issues"
+  },
+  "homepage": "https://github.com/suruaino/rentcheck-backend#readme",
+  "dependencies": {
+    "express": "^5.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "prettier": "3.10.1"
+  }
+}
