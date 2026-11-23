@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS units (
     bedrooms TINYINT UNSIGNED DEFAULT 0,
     bathrooms DECIMAL(3,1) DEFAULT 0,
     status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+    occupancy_status ENUM('vacant', 'occupied') NOT NULL DEFAULT 'vacant',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
@@ -75,3 +76,59 @@ CREATE TABLE IF NOT EXISTS units (
 
     INDEX idx_units_property (property_id)
 ) ENGINE=InnoDB;
+
+
+-- 4. Invitations table
+CREATE TABLE IF NOT EXISTS invitations (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    property_id BIGINT UNSIGNED NOT NULL,
+    unit_id BIGINT UNSIGNED NULL,
+    invited_by BIGINT UNSIGNED NOT NULL,
+    invitee_email VARCHAR(255) NULL,
+    invitee_phone VARCHAR(20) NULL,
+    role ENUM('tenant', 'caretaker') NOT NULL,
+    token VARCHAR(255) NOT NULL UNIQUE,
+    status ENUM('pending', 'accepted', 'expired') DEFAULT 'pending',
+    expires_at DATETIME NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (property_id) REFERENCES properties(id),
+    FOREIGN KEY (unit_id) REFERENCES units(id),
+    FOREIGN KEY (invited_by) REFERENCES users(id)
+);
+
+
+-- 5. Property caretakers table
+CREATE TABLE IF NOT EXISTS property_caretakers (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    property_id BIGINT UNSIGNED NOT NULL,
+    caretaker_id BIGINT UNSIGNED NOT NULL,
+
+    FOREIGN KEY (property_id) REFERENCES properties(id),
+    FOREIGN KEY (caretaker_id) REFERENCES users(id),
+
+    UNIQUE (property_id, caretaker_id)
+);
+
+
+-- 6. Tenancies table
+CREATE TABLE IF NOT EXISTS tenancies (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    property_id BIGINT UNSIGNED NOT NULL,
+    unit_id BIGINT UNSIGNED NOT NULL,
+    rent_amount DECIMAL(10, 2) NOT NULL,
+    payment_frequency ENUM(
+        'monthly',
+        'quarterly',
+        'biannually',
+        'annually'
+    ) DEFAULT 'monthly',
+    start_date DATE NOT NULL,
+    end_date DATE NULL,
+    status ENUM('active', 'ended') DEFAULT 'active',
+
+    FOREIGN KEY (tenant_id) REFERENCES users(id),
+    FOREIGN KEY (property_id) REFERENCES properties(id),
+    FOREIGN KEY (unit_id) REFERENCES units(id)
+);
