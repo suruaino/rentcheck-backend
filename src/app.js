@@ -1,10 +1,22 @@
 import express from 'express';
-// import notesRoutes from './routes/notes.routes.js';
+import cors from 'cors';
+import helmet from 'helmet';
+
 import { logger } from './middleware/logger.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 const app = express();
+
+// Add security-related HTTP headers
+app.use(helmet());
+
+// Allow requests from the frontend
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  })
+);
 
 // 1. Read JSON bodies into req.body (this has to come before the routes)
 app.use(express.json());
@@ -16,9 +28,6 @@ app.use(logger);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
-
-// 4. Notes routes
-// app.use('/api/notes', notesRoutes);
 
 // 5. No route matched (must come after all routes)
 app.use(notFound);
