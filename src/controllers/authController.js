@@ -1,6 +1,9 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
+import { findById } from '../models/userModel.js';
+import { AppError } from '../utils/AppError.js';
+import { successResponse } from '../utils/response.js';
 
 const otpStore = new Map();
 
@@ -97,40 +100,29 @@ export async function register(req, res, next) {
     const resolvedEstateTitle = estateTitle ?? portfolioTitle ?? null;
 
     if (!first_name) {
-      return res.status(400).json({
-        success: false,
-        message: 'Full name is required',
-        data: null,
-      });
+      throw new AppError('Full name is required', 400);
     }
 
     if (!email && !phone) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email or phone number is required',
-        data: null,
-      });
+      throw new AppError('Email or phone number is required', 400);
     }
 
     if (!password || String(password).length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password must be at least 8 characters',
-        data: null,
-      });
+      throw new AppError('Password must be at least 8 characters', 400);
     }
 
     if (confirmPassword !== undefined && confirmPassword !== password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Passwords do not match',
-        data: null,
-      });
+      throw new AppError('Passwords do not match', 400);
     }
 
     const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = phone ? String(phone).trim() : null;
     const userRole = inviteToken && role ? role : role || 'landlord';
+    const allowedRoles = ['landlord', 'property_manager', 'tenant', 'caretaker', 'artisan', 'admin'];
+
+    if (!allowedRoles.includes(userRole)) {
+      throw new AppError('Invalid role', 400);
+    }
 
     if (normalizedEmail) {
       const [existingEmail] = await pool.execute(
@@ -138,11 +130,7 @@ export async function register(req, res, next) {
         [normalizedEmail]
       );
       if (existingEmail.length) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email address is already registered',
-          data: null,
-        });
+        throw new AppError('Email address is already registered', 409);
       }
     }
 
@@ -152,11 +140,7 @@ export async function register(req, res, next) {
         [normalizedPhone]
       );
       if (existingPhone.length) {
-        return res.status(400).json({
-          success: false,
-          message: 'Phone number is already registered',
-          data: null,
-        });
+        throw new AppError('Phone number is already registered', 409);
       }
     }
 
@@ -184,16 +168,17 @@ export async function register(req, res, next) {
     const token = signToken(createdUser);
     const routing = await getRoleRoutingMetadata(createdUser);
 
-    return res.status(201).json({
-      success: true,
-      message: 'Account registered successfully',
-      data: {
+    return successResponse(
+      res,
+      'Account registered successfully',
+      {
         token,
         role: createdUser.role,
         ...routing,
         user: sanitizeUser(createdUser),
       },
-    });
+      201
+    );
   } catch (err) {
     return next(err);
   }
@@ -205,11 +190,7 @@ export async function login(req, res, next) {
     const loginId = String(identifier || email || phone || '').trim();
 
     if (!loginId || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email/phone and password are required',
-        data: null,
-      });
+      throw new AppError('Email/phone and password are required', 400);
     }
 
     const [rows] = await pool.execute(
@@ -218,35 +199,23 @@ export async function login(req, res, next) {
     );
 
     if (!rows.length) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid login credentials',
-        data: null,
-      });
+      throw new AppError('Invalid login credentials', 401);
     }
 
     const user = rows[0];
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid login credentials',
-        data: null,
-      });
+      throw new AppError('Invalid login credentials', 401);
     }
 
     const token = signToken(user);
     const routing = await getRoleRoutingMetadata(user);
 
-    return res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        token,
-        role: user.role,
-        ...routing,
-        user: sanitizeUser(user),
-      },
+    return successResponse(res, 'Login successful', {
+      token,
+      role: user.role,
+      ...routing,
+      user: sanitizeUser(user),
     });
   } catch (err) {
     return next(err);
@@ -255,16 +224,17 @@ export async function login(req, res, next) {
 
 export async function getMe(req, res, next) {
   try {
-    const routing = await getRoleRoutingMetadata(req.user);
+    const user = (await findById(req.user.id)) || req.user;
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
 
-    return res.status(200).json({
-      success: true,
-      message: 'Authenticated user retrieved',
-      data: {
-        role: req.user.role,
-        ...routing,
-        user: sanitizeUser(req.user),
-      },
+    const routing = await getRoleRoutingMetadata(user);
+
+    return successResponse(res, 'Authenticated user retrieved', {
+      role: user.role,
+      ...routing,
+      user: sanitizeUser(user),
     });
   } catch (err) {
     return next(err);
@@ -279,22 +249,14 @@ export async function verifyOtp(req, res, next) {
     const code = String(otp || '').trim();
 
     if (!key || !/^\d{6}$/.test(code)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid email/phone and 6-digit OTP are required',
-        data: null,
-      });
+      throw new AppError('Valid email/phone and 6-digit OTP are required', 400);
     }
 
     const storedCode = otpStore.get(key);
     const isValid = code === '123456' || (storedCode && storedCode === code);
 
     if (!isValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid verification OTP',
-        data: null,
-      });
+      throw new AppError('Invalid verification OTP', 400);
     }
 
     const [rows] = await pool.execute(
@@ -303,11 +265,7 @@ export async function verifyOtp(req, res, next) {
     );
 
     if (!rows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-        data: null,
-      });
+      throw new AppError('User not found', 404);
     }
 
     await pool.execute(
@@ -319,14 +277,10 @@ export async function verifyOtp(req, res, next) {
     const user = rows[0];
     const token = signToken(user);
 
-    return res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully',
-      data: {
-        token,
-        role: user.role,
-        user: sanitizeUser(user),
-      },
+    return successResponse(res, 'OTP verified successfully', {
+      token,
+      role: user.role,
+      user: sanitizeUser(user),
     });
   } catch (err) {
     return next(err);
@@ -339,11 +293,7 @@ export async function forgotPassword(req, res, next) {
     const rawId = String(identifier || email || phone || '').trim();
 
     if (!rawId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email or phone number is required',
-        data: null,
-      });
+      throw new AppError('Email or phone number is required', 400);
     }
 
     const [rows] = await pool.execute(
@@ -352,22 +302,18 @@ export async function forgotPassword(req, res, next) {
     );
 
     if (!rows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'No account found with that email or phone number',
-        data: null,
-      });
+      throw new AppError('No account found with that email or phone number', 404);
     }
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     otpStore.set(rawId.toLowerCase(), otp);
     console.log(`[MVP Recovery OTP] ${rawId}: ${otp}`);
 
-    return res.status(200).json({
-      success: true,
-      message: 'Recovery OTP sent',
-      data: process.env.NODE_ENV !== 'production' ? { devOtp: otp } : null,
-    });
+    return successResponse(
+      res,
+      'Recovery OTP sent',
+      process.env.NODE_ENV !== 'production' ? { devOtp: otp } : null
+    );
   } catch (err) {
     return next(err);
   }
@@ -380,27 +326,15 @@ export async function resetPassword(req, res, next) {
     const code = String(otp || '').trim();
 
     if (!rawId || !code || !newPassword) {
-      return res.status(400).json({
-        success: false,
-        message: 'Identifier, OTP, and new password are required',
-        data: null,
-      });
+      throw new AppError('Identifier, OTP, and new password are required', 400);
     }
 
     if (String(newPassword).length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: 'New password must be at least 8 characters',
-        data: null,
-      });
+      throw new AppError('New password must be at least 8 characters', 400);
     }
 
     if (confirmPassword !== undefined && confirmPassword !== newPassword) {
-      return res.status(400).json({
-        success: false,
-        message: 'Passwords do not match',
-        data: null,
-      });
+      throw new AppError('Passwords do not match', 400);
     }
 
     const storedCode = otpStore.get(rawId.toLowerCase());
@@ -409,11 +343,7 @@ export async function resetPassword(req, res, next) {
       (storedCode && storedCode === code);
 
     if (!isValidOtp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or expired recovery OTP',
-        data: null,
-      });
+      throw new AppError('Invalid or expired recovery OTP', 400);
     }
 
     const [rows] = await pool.execute(
@@ -422,11 +352,7 @@ export async function resetPassword(req, res, next) {
     );
 
     if (!rows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-        data: null,
-      });
+      throw new AppError('User not found', 404);
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
@@ -436,11 +362,7 @@ export async function resetPassword(req, res, next) {
     ]);
     otpStore.delete(rawId.toLowerCase());
 
-    return res.status(200).json({
-      success: true,
-      message: 'Password changed successfully',
-      data: null,
-    });
+    return successResponse(res, 'Password changed successfully', null);
   } catch (err) {
     return next(err);
   }
