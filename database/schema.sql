@@ -1,5 +1,4 @@
-
--- RENTCHECK initial database schema
+-- RENTCHECK database schema
 
 USE rentcheck_db;
 
@@ -8,8 +7,10 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    phone VARCHAR(20) UNIQUE,
+    title VARCHAR(50) NULL DEFAULT NULL,
+    estate_title VARCHAR(150) NULL DEFAULT NULL,
+    email VARCHAR(255) NULL UNIQUE,
+    phone VARCHAR(20) NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     role ENUM(
         'landlord',
@@ -18,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
         'caretaker',
         'artisan',
         'admin'
-    ) NOT NULL,
+    ) NOT NULL DEFAULT 'landlord',
     account_status ENUM('active', 'suspended') NOT NULL DEFAULT 'active',
     email_verified_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -95,7 +96,7 @@ CREATE TABLE IF NOT EXISTS invitations (
     FOREIGN KEY (property_id) REFERENCES properties(id),
     FOREIGN KEY (unit_id) REFERENCES units(id),
     FOREIGN KEY (invited_by) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 
 -- 5. Property caretakers table
@@ -108,7 +109,7 @@ CREATE TABLE IF NOT EXISTS property_caretakers (
     FOREIGN KEY (caretaker_id) REFERENCES users(id),
 
     UNIQUE (property_id, caretaker_id)
-);
+) ENGINE=InnoDB;
 
 
 -- 6. Tenancies table
@@ -131,4 +132,25 @@ CREATE TABLE IF NOT EXISTS tenancies (
     FOREIGN KEY (tenant_id) REFERENCES users(id),
     FOREIGN KEY (property_id) REFERENCES properties(id),
     FOREIGN KEY (unit_id) REFERENCES units(id)
-);
+) ENGINE=InnoDB;
+
+
+-- 7. Audit logs table
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    action VARCHAR(100) NOT NULL,
+    entity_type VARCHAR(100) NULL,
+    entity_id VARCHAR(100) NULL,
+    metadata JSON NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_audit_logs_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE,
+
+    INDEX idx_audit_logs_user (user_id),
+    INDEX idx_audit_logs_entity (entity_type, entity_id)
+) ENGINE=InnoDB;
