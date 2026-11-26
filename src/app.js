@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { logger } from './middleware/logger.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import authRoutes from "./routes/authRoutes.js";
 
 const app = express();
 
@@ -28,6 +29,8 @@ app.use(logger);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
+
+app.use("/api/auth", authRoutes);
 
 // 5. No route matched (must come after all routes)
 app.use(notFound);

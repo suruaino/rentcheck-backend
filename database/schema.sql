@@ -4,12 +4,13 @@
 USE rentcheck_db;
 
 -- 1. Users table
+
 CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    phone VARCHAR(20) UNIQUE,
+    email VARCHAR(255) NULL UNIQUE,
+    phone VARCHAR(20) NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     role ENUM(
         'landlord',
@@ -19,13 +20,14 @@ CREATE TABLE IF NOT EXISTS users (
         'artisan',
         'admin'
     ) NOT NULL,
+    estate_title VARCHAR(150) NULL,
+    title VARCHAR(50) NULL,
     account_status ENUM('active', 'suspended') NOT NULL DEFAULT 'active',
     email_verified_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
-
 
 -- 2. Properties table
 CREATE TABLE IF NOT EXISTS properties (
@@ -77,6 +79,16 @@ CREATE TABLE IF NOT EXISTS units (
     INDEX idx_units_property (property_id)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    action VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id) REFERENCES users(id)
+        ON DELETE SET NULL
+) ENGINE=InnoDB;
 
 -- 4. Invitations table
 CREATE TABLE IF NOT EXISTS invitations (
