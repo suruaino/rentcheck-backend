@@ -115,4 +115,30 @@ CREATE TABLE IF NOT EXISTS tenancies (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_tenancies_tenant_status (tenant_id, status),
-  KEY idx_tenancies_property_unit (
+  KEY idx_tenancies_property_unit (property_id, unit_id),
+  CONSTRAINT fk_tenancies_tenant
+    FOREIGN KEY (tenant_id) REFERENCES users (id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_tenancies_property
+    FOREIGN KEY (property_id) REFERENCES properties (id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_tenancies_unit
+    FOREIGN KEY (unit_id) REFERENCES units (id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NULL,
+  action VARCHAR(120) NOT NULL,
+  entity_type VARCHAR(80) NULL,
+  entity_id VARCHAR(120) NULL,
+  metadata JSON NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_audit_logs_user_action (user_id, action),
+  KEY idx_audit_logs_entity (entity_type, entity_id),
+  CONSTRAINT fk_audit_logs_user
+    FOREIGN KEY (user_id) REFERENCES users (id)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
