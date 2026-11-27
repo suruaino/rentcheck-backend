@@ -205,7 +205,7 @@ export const register = async (req, res, next) => {
     let invitation = null;
     if (inviteToken) {
       const [invites] = await connection.query(
-        `SELECT id, property_id, unit_id, invitee_email, invitee_phone, role, status, expires_at
+        `SELECT id, property_id, unit_id, invitee_email, invitee_phone, role, agreed_rent, status, expires_at
          FROM invitations
          WHERE token = ?
          LIMIT 1`,
@@ -322,6 +322,34 @@ export const register = async (req, res, next) => {
            VALUES (?, ?, 1, 0, 'active')
            ON DUPLICATE KEY UPDATE status = 'active'`,
           [invitation.property_id, userId]
+        );
+      } else if (finalRole === 'tenant' && invitation.unit_id) {
+        const [[unitRow]] = await connection.query(
+          `SELECT rent_amount FROM units WHERE id = ? LIMIT 1`,
+          [invitation.unit_id]
+        );
+
+        const resolvedRent =
+          invitation.agreed_rent !== null && invitation.agreed_rent !== undefined
+            ? invitation.agreed_rent
+            : (unitRow?.rent_amount ?? 0);
+
+        await connection.query(
+          `INSERT INTO tenancies (
+             tenant_id,
+             property_id,
+             unit_id,
+             rent_amount,
+             start_date,
+             status
+           )
+           VALUES (?, ?, ?, ?, CURDATE(), 'active')`,
+          [userId, invitation.property_id, invitation.unit_id, resolvedRent]
+        );
+
+        await connection.query(
+          `UPDATE units SET occupancy_status = 'occupied' WHERE id = ?`,
+          [invitation.unit_id]
         );
       }
     }
