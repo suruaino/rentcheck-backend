@@ -9,6 +9,270 @@ function isValidDateString(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }
 
+function normalizePropertyIds(rawList) {
+  if (!Array.isArray(rawList)) return null;
+  return [
+    ...new Set(
+      rawList
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+}
+
+export async function getAllCaretakers(req, res, next) {
+  try {
+    const userId = getUserId(req);
+
+    const [rows] = await pool.execute(
+      `SELECT pc.id,
+              pc.property_id,
+              pc.caretaker_id,
+              pc.status,
+              pc.can_manage_maintenance,
+              pc.can_record_cash_payments,
+              pc.created_at,
+              p.name AS property_name,
+              p.city AS property_city,
+              p.state AS property_state,
+              u.first_name,
+              u.last_name,
+              u.email,
+              u.phone
+       FROM property_caretakers pc
+       INNER JOIN properties p ON p.id = pc.property_id
+       INNER JOIN users u ON u.id = pc.caretaker_id
+       WHERE p.owner_id = ?
+       ORDER BY u.first_name ASC, u.last_name ASC, pc.created_at DESC`,
+      [userId]
+    );
+
+    const groupedMap = new Map();
+
+    for (const row of rows) {
+      const caretakerId = Number(row.caretaker_id);
+      if (!groupedMap.has(caretakerId)) {
+        groupedMap.set(caretakerId, {
+          caretakerId,
+          firstName: row.first_name,
+          lastName: row.last_name,
+          fullName: `${row.first_name} ${row.last_name}`.trim(),
+          email: row.email,
+          phone: row.phone,
+          status: row.status,
+          canManageMaintenance: Boolean(row.can_manage_maintenance),
+          canRecordCashPayments: Boolean(row.can_record_cash_payments),
+          assignedPropertyIds: [],
+          assignedProperties: [],
+        });
+      }
+
+      const entry = groupedMap.get(caretakerId);
+      const propId = Number(row.property_id);
+
+      if (!entry.assignedPropertyIds.includes(propId)) {
+        entry.assignedPropertyIds.push(propId);
+        entry.assignedProperties.push({
+          id: propId,
+          name: row.property_name,
+          city: row.property_city,
+          state: row.property_state,
+          status: row.status,
+          canManageMaintenance: Boolean(row.can_manage_maintenance),
+          canRecordCashPayments: Boolean(row.can_record_cash_payments),
+        });
+      }
+
+      if (row.status === 'active') {
+        entry.status = 'active';
+      } else if (entry.status !== 'active' && row.status === 'pending') {
+        entry.status = 'pending';
+      }
+
+      if (row.can_manage_maintenance) entry.canManageMaintenance = true;
+      if (row.can_record_cash_payments) entry.canRecordCashPayments = true;
+    }
+
+    const caretakers = Array.from(groupedMap.values());
+
+    res.status(200).json({
+      status: 'success',
+      results: caretakers.length,
+      data: {
+        caretakers,
+        assignments: rows,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateCaretakerAccess(req, res, next) {
+  const connection = await pool.getConnection();
+
+  try {
+    const userId = getUserId(req);
+    const { caretakerId } = req.params;
+    const targetCaretakerId = Number(caretakerId);
+
+    if (!Number.isInteger(targetCaretakerId) || targetCaretakerId <= 0) {
+      throw new AppError('Invalid caretakerId', 400);
+    }
+
+    const [caretakerUsers] = await connection.execute(
+      `SELECT id, first_name, last_name, email, phone, role
+       FROM users
+       WHERE id = ? AND role = 'caretaker'`,
+      [targetCaretakerId]
+    );
+
+    if (caretakerUsers.length === 0) {
+      throw new AppError('Caretaker not found', 404);
+    }
+
+    const [existingAssignments] = await connection.execute(
+      `SELECT pc.*
+       FROM property_caretakers pc
+       INNER JOIN properties p ON p.id = pc.property_id
+       WHERE pc.caretaker_id = ? AND p.owner_id = ?`,
+      [targetCaretakerId, userId]
+    );
+
+    const sampleCurrent = existingAssignments[0] || {
+      status: 'active',
+      can_manage_maintenance: 1,
+      can_record_cash_payments: 0,
+    };
+
+    const {
+      status,
+      can_manage_maintenance,
+      canManageMaintenance,
+      can_record_cash_payments,
+      canRecordCashPayments,
+      assigned_property_ids,
+      assignedProperties,
+      propertyIds,
+    } = req.body;
+
+    const nextStatus = status !== undefined ? String(status).trim() : sampleCurrent.status;
+    if (!['pending', 'active', 'revoked'].includes(nextStatus)) {
+      throw new AppError('status must be pending, active, or revoked', 400);
+    }
+
+    const nextManageMaint =
+      can_manage_maintenance !== undefined
+        ? Number(Boolean(can_manage_maintenance))
+        : canManageMaintenance !== undefined
+          ? Number(Boolean(canManageMaintenance))
+          : Number(Boolean(sampleCurrent.can_manage_maintenance));
+
+    const nextRecordCash =
+      can_record_cash_payments !== undefined
+        ? Number(Boolean(can_record_cash_payments))
+        : canRecordCashPayments !== undefined
+          ? Number(Boolean(canRecordCashPayments))
+          : Number(Boolean(sampleCurrent.can_record_cash_payments));
+
+    const rawPropertyList = assigned_property_ids ?? assignedProperties ?? propertyIds;
+    const normalizedIds = normalizePropertyIds(rawPropertyList);
+
+    await connection.beginTransaction();
+
+    if (normalizedIds !== null) {
+      if (normalizedIds.length > 0) {
+        const placeholders = normalizedIds.map(() => '?').join(', ');
+        const [ownedProps] = await connection.execute(
+          `SELECT id FROM properties WHERE id IN (${placeholders}) AND owner_id = ?`,
+          [...normalizedIds, userId]
+        );
+
+        if (ownedProps.length !== normalizedIds.length) {
+          throw new AppError(
+            'One or more assigned properties were not found or do not belong to you',
+            403
+          );
+        }
+      }
+
+      const [allOwnedProps] = await connection.execute(
+        'SELECT id FROM properties WHERE owner_id = ?',
+        [userId]
+      );
+      const ownedPropIds = allOwnedProps.map((p) => Number(p.id));
+
+      if (ownedPropIds.length > 0) {
+        const ownedPlaceholders = ownedPropIds.map(() => '?').join(', ');
+        await connection.execute(
+          `DELETE FROM property_caretakers
+           WHERE caretaker_id = ? AND property_id IN (${ownedPlaceholders})`,
+          [targetCaretakerId, ...ownedPropIds]
+        );
+      }
+
+      for (const targetPropId of normalizedIds) {
+        await connection.execute(
+          `INSERT INTO property_caretakers
+            (property_id, caretaker_id, status, can_manage_maintenance, can_record_cash_payments)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             status = VALUES(status),
+             can_manage_maintenance = VALUES(can_manage_maintenance),
+             can_record_cash_payments = VALUES(can_record_cash_payments)`,
+          [
+            targetPropId,
+            targetCaretakerId,
+            nextStatus,
+            nextManageMaint,
+            nextRecordCash,
+          ]
+        );
+      }
+    } else if (existingAssignments.length > 0) {
+      await connection.execute(
+        `UPDATE property_caretakers pc
+         INNER JOIN properties p ON p.id = pc.property_id
+         SET pc.status = ?,
+             pc.can_manage_maintenance = ?,
+             pc.can_record_cash_payments = ?
+         WHERE pc.caretaker_id = ? AND p.owner_id = ?`,
+        [nextStatus, nextManageMaint, nextRecordCash, targetCaretakerId, userId]
+      );
+    } else {
+      throw new AppError('No caretaker assignments found for this caretaker', 404);
+    }
+
+    await connection.commit();
+
+    const [updatedRows] = await pool.execute(
+      `SELECT pc.*, p.name AS property_name
+       FROM property_caretakers pc
+       INNER JOIN properties p ON p.id = pc.property_id
+       WHERE pc.caretaker_id = ? AND p.owner_id = ?
+       ORDER BY pc.property_id ASC`,
+      [targetCaretakerId, userId]
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        caretakerId: targetCaretakerId,
+        status: nextStatus,
+        canManageMaintenance: Boolean(nextManageMaint),
+        canRecordCashPayments: Boolean(nextRecordCash),
+        assignedPropertyIds: updatedRows.map((r) => Number(r.property_id)),
+        assignments: updatedRows,
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
+    next(error);
+  } finally {
+    connection.release();
+  }
+}
+
 export async function getPropertyCaretakers(req, res, next) {
   try {
     const { propertyId } = req.params;
@@ -118,50 +382,38 @@ export async function updateCaretakerPermissions(req, res, next) {
       [nextStatus, nextManageMaint, nextRecordCash, propertyId, caretakerId]
     );
 
-    const rawPropertyList = assigned_property_ids ?? assignedProperties;
-    if (Array.isArray(rawPropertyList)) {
-      const normalizedIds = [
-        ...new Set(
-          rawPropertyList
-            .map((id) => Number(id))
-            .filter((id) => Number.isInteger(id) && id > 0)
-        ),
-      ];
+    const normalizedIds = normalizePropertyIds(assigned_property_ids ?? assignedProperties);
+    if (normalizedIds && normalizedIds.length > 0) {
+      const placeholders = normalizedIds.map(() => '?').join(', ');
+      const [ownedProps] = await connection.execute(
+        `SELECT id FROM properties WHERE id IN (${placeholders}) AND owner_id = ?`,
+        [...normalizedIds, userId]
+      );
 
-      if (normalizedIds.length > 0) {
-        const placeholders = normalizedIds.map(() => '?').join(', ');
-        const [ownedProps] = await connection.execute(
-          `SELECT id FROM properties WHERE id IN (${placeholders}) AND owner_id = ?`,
-          [...normalizedIds, userId]
+      if (ownedProps.length !== normalizedIds.length) {
+        throw new AppError(
+          'One or more assigned properties were not found or do not belong to you',
+          403
         );
+      }
 
-        if (ownedProps.length !== normalizedIds.length) {
-          throw new AppError(
-            'One or more assigned properties were not found or do not belong to you',
-            403
-          );
-        }
-
-        for (const targetPropId of normalizedIds) {
-          await connection.execute(
-            `INSERT INTO property_caretakers
-              (property_id, caretaker_id, assigned_by, status, can_manage_maintenance, can_record_cash_payments)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               assigned_by = VALUES(assigned_by),
-               status = VALUES(status),
-               can_manage_maintenance = VALUES(can_manage_maintenance),
-               can_record_cash_payments = VALUES(can_record_cash_payments)`,
-            [
-              targetPropId,
-              caretakerId,
-              userId,
-              nextStatus,
-              nextManageMaint,
-              nextRecordCash,
-            ]
-          );
-        }
+      for (const targetPropId of normalizedIds) {
+        await connection.execute(
+          `INSERT INTO property_caretakers
+            (property_id, caretaker_id, status, can_manage_maintenance, can_record_cash_payments)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             status = VALUES(status),
+             can_manage_maintenance = VALUES(can_manage_maintenance),
+             can_record_cash_payments = VALUES(can_record_cash_payments)`,
+          [
+            targetPropId,
+            caretakerId,
+            nextStatus,
+            nextManageMaint,
+            nextRecordCash,
+          ]
+        );
       }
     }
 
@@ -200,7 +452,7 @@ export async function getPropertyTenancies(req, res, next) {
        INNER JOIN units u ON u.id = t.unit_id
        INNER JOIN users usr ON usr.id = t.tenant_id
        WHERE t.property_id = ?
-       ORDER BY t.created_at DESC`,
+       ORDER BY t.id DESC`,
       [propertyId]
     );
 
@@ -228,7 +480,7 @@ export async function getMyTenancies(req, res, next) {
        INNER JOIN properties p ON p.id = t.property_id
        INNER JOIN units u ON u.id = t.unit_id
        WHERE t.tenant_id = ?
-       ORDER BY t.created_at DESC`,
+       ORDER BY t.id DESC`,
       [userId]
     );
 

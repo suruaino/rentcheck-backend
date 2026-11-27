@@ -3,6 +3,8 @@ import { protect } from '../middleware/authMiddleware.js';
 import { checkRole } from '../middleware/roleMiddleware.js';
 import { checkPropertyAccess } from '../middleware/propertyMiddleware.js';
 import {
+  getAllCaretakers,
+  updateCaretakerAccess,
   getPropertyCaretakers,
   updateCaretakerPermissions,
   getPropertyTenancies,
@@ -13,6 +15,14 @@ import {
 const router = Router();
 
 router.use(protect);
+
+// Landlord portfolio-wide caretaker directory & access/property assignment updates
+router.get('/caretakers', checkRole('landlord'), getAllCaretakers);
+router.patch(
+  '/caretakers/:caretakerId/access',
+  checkRole('landlord'),
+  updateCaretakerAccess
+);
 
 // Tenant's own tenancies
 router.get('/tenancies/me', getMyTenancies);
